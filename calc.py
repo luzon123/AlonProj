@@ -1,7 +1,7 @@
 import sqlite3
 import yfinance as yf
 from yfinance.exceptions import YFRateLimitError
-from flask import Flask, render_template
+from flask import Flask, render_template, request, redirect, url_for, session
 import time 
 import os
 
@@ -24,6 +24,9 @@ cursor.execute('''CREATE TABLE IF NOT EXISTS investment (
 
 # יצירת אפליקציה של Flask
 app = Flask(__name__)
+app.secret_key = "supersecretkey"  # שנה את זה לסיסמה חזקה משלך
+
+PASSWORD = "Yossi1105"  # שנה את הסיסמה הרצויה כאן
 
 # פונקציה לקבלת ערך המניה הנוכחי של S&P 500, ולהמיר אותו לשקלים
 def get_sp500_price(retries=3, delay=5):
@@ -43,27 +46,24 @@ def get_sp500_price(retries=3, delay=5):
             time.sleep(delay)
     return None
 
-
-
 # פונקציה לשמירת השקעה ראשונית (אם עדיין לא קיימת)
 def save_initial_investment(investment, investment_2=None, investment_3=None, investment_4=None):
     cursor.execute("SELECT COUNT(*) FROM investment")
     count = cursor.fetchone()[0]
-    
+
     if count == 0:
         sp500_price = get_sp500_price()
-        
-        # חישוב המניות לכל השקעה
+
         shares = investment / sp500_price
-        shares_2 = shares_3 = shares_4 = 0  # מניח שלא מתבצעת השקעה אם לא נמסרה ערך
-        
+        shares_2 = shares_3 = shares_4 = 0
+
         if investment_2:
             shares_2 = investment_2 / sp500_price
         if investment_3:
             shares_3 = investment_3 / sp500_price
         if investment_4:
             shares_4 = investment_4 / sp500_price
-        
+
         cursor.execute("INSERT INTO investment (initial_investment, initial_investment_2, initial_investment_3, initial_investment_4, shares, shares_2, shares_3, shares_4, sp500_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                        (investment, investment_2, investment_3, investment_4, shares, shares_2, shares_3, shares_4, sp500_price))
         conn.commit()
@@ -71,14 +71,15 @@ def save_initial_investment(investment, investment_2=None, investment_3=None, in
     else:
         print("The initial investment has already been saved.")
 
-# פונקציה לעדכון הסכום בהשקעה הנוכחית (רק זה משתנה)
+# פונקציה לעדכון ההשקעה
+
 def update_investment():
     sp500_price = get_sp500_price()
     cursor.execute("SELECT id, initial_investment, initial_investment_2, initial_investment_3, initial_investment_4, shares, shares_2, shares_3, shares_4, sp500_price FROM investment ORDER BY id DESC LIMIT 1")
     result = cursor.fetchone()
-    
+
     if result:
-        initial_investment = result[1]  # השקעה ראשונית לא משתנה
+        initial_investment = result[1]
         initial_investment_2 = result[2]
         initial_investment_3 = result[3]
         initial_investment_4 = result[4]
@@ -86,32 +87,47 @@ def update_investment():
         shares_2 = result[6]
         shares_3 = result[7]
         shares_4 = result[8]
-        current_sp500_price = result[9]
-        
-        # חישוב הסכום החדש לכל השקעה (הסכום הנוכחי בלבד משתנה)
+
         new_investment = shares * sp500_price
         new_investment_2 = shares_2 * sp500_price
         new_investment_3 = shares_3 * sp500_price
         new_investment_4 = shares_4 * sp500_price
-        profit_loss = new_investment - initial_investment  # רווח או הפסד
+        profit_loss = new_investment - initial_investment
         profit_loss_2 = new_investment_2 - initial_investment_2
         profit_loss_3 = new_investment_3 - initial_investment_3
         profit_loss_4 = new_investment_4 - initial_investment_4
-        
+
         cursor.execute("UPDATE investment SET sp500_price = ?, shares = ?, shares_2 = ?, shares_3 = ?, shares_4 = ? WHERE id = ?",
-                       (sp500_price, shares, shares_2, shares_3, shares_4, result[0]))  # עדכון רק את הערכים הנוכחיים
+                       (sp500_price, shares, shares_2, shares_3, shares_4, result[0]))
         conn.commit()
         return initial_investment, initial_investment_2, initial_investment_3, initial_investment_4, shares, shares_2, shares_3, shares_4, new_investment, new_investment_2, new_investment_3, new_investment_4, profit_loss, profit_loss_2, profit_loss_3, profit_loss_4, sp500_price
     else:
         print("No investment found in the database to update.")
         return None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None
 
-# דף הבית - הצגת המידע
+# דף התחברות בסיסמה
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        password = request.form.get('password')
+        if password == PASSWORD:
+            session['authenticated'] = True
+            return redirect(url_for('home'))
+        else:
+            return "סיסמה שגויה. נסה שוב."
+    return '''<form method="POST">
+                סיסמה: <input type="password" name="password">
+                <input type="submit" value="היכנס">
+              </form>'''
+
+# דף הבית - דרוש סיסמה
 @app.route('/')
 def home():
-    # עדכון ההשקעה וחישוב הרווח/הפסד
+    if not session.get('authenticated'):
+        return redirect(url_for('login'))
+
     initial_investment, initial_investment_2, initial_investment_3, initial_investment_4, shares, shares_2, shares_3, shares_4, new_investment, new_investment_2, new_investment_3, new_investment_4, profit_loss, profit_loss_2, profit_loss_3, profit_loss_4, sp500_price = update_investment()
-    
+
     if initial_investment is not None:
         return render_template('index.html', 
                                initial_investment=initial_investment, 
@@ -134,13 +150,10 @@ def home():
     else:
         return "No investment found. Please save your initial investment first."
 
-# שמירת השקעה ראשונית (שימוש לדוגמה)
 save_initial_investment(1066981, 361300, 250000, 100000)
 
-# הפעלת השרת
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=False, host="0.0.0.0", port=port)
 
-# סגירת החיבור למסד נתונים
 conn.close()
