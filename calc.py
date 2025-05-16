@@ -138,7 +138,8 @@ save_initial_investment(1066981, 361300, 250000, 100000)
 
 # הפעלת השרת
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(debug=False, host="0.0.0.0", port=port)
 
 # סגירת החיבור למסד נתונים
 conn.close()
