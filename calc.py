@@ -3,6 +3,7 @@ import yfinance as yf
 from yfinance.exceptions import YFRateLimitError
 from flask import Flask, render_template
 import time 
+import os
 
 # יצירת חיבור למסד נתונים SQLite
 conn = sqlite3.connect('investment.db', check_same_thread=False)
